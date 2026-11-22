@@ -8,32 +8,36 @@
 
 ## 1. Tipos del Dominio
 
+Los identificadores del código (tipos, campos y funciones) van en **inglés**. Los textos visibles para el usuario (labels y mensajes de error) y los valores de `Sex` van en español.
+
 ```ts
-export type Sexo = 'femenino' | 'masculino'
+/** Values sent as-is to Make. */
+export type Sex = 'femenino' | 'masculino'
 
 export interface Participant {
-  id: string                         // identificador local (p. ej. crypto.randomUUID())
-  nombre: string
-  apellido: string
-  rut: string                        // tal como lo escribió el usuario; se normaliza al validar/enviar
-  sexo: Sexo | ''                    // '' = sin seleccionar
-  edad: number | null                // entero; null = sin ingresar
-  email: string                      // '' = vacío
-  telefono: string                   // '' = vacío
-  requiereTransporte: boolean | null // null = sin responder
-  esPrincipal: boolean
+  id: string                     // local identifier
+  firstName: string
+  lastName: string
+  rut: string                    // as typed by the user; normalized on validation/submission
+  sex: Sex | ''                  // '' = not selected
+  age: number | null             // integer; null = not entered; under 1 year old = 0
+  email: string                  // '' = empty
+  phone: string                  // '' = empty
+  needsTransport: boolean | null // null = not answered (required: explicit Yes / No)
+  isPrincipal: boolean
 }
 
 export interface PaymentData {
-  personaDepositante: string
+  depositMadeBy: string
   voucher: File | null
 }
 
-export type ParticipantField = Exclude<keyof Participant, 'id' | 'esPrincipal'>
+export type ParticipantField = Exclude<keyof Participant, 'id' | 'isPrincipal'>
 export type ParticipantErrors = Partial<Record<ParticipantField, string>>
 ```
 
-* `requiereTransporte` es `boolean | null` porque el campo es obligatorio: el usuario debe elegir explícitamente **Sí** o **No**. Un checkbox desmarcado no cuenta como respuesta.
+* `needsTransport` es `boolean | null` porque el campo es obligatorio: el usuario debe elegir explícitamente **Sí** o **No**. Un checkbox desmarcado no cuenta como respuesta.
+* `createEmptyParticipant(id: string, isPrincipal: boolean): Participant` crea un participante con todos los campos vacíos y sin respuestas preseleccionadas.
 
 ---
 
@@ -41,7 +45,7 @@ export type ParticipantErrors = Partial<Record<ParticipantField, string>>
 
 ### 2.1. Tarifa por edad
 
-* **Firma:** `getFare(edad: number): number`
+* **Firma:** `getFare(age: number): number`
 * **Reglas** (montos en CLP, enteros):
 
 | Rango de edad | Tarifa |
@@ -56,13 +60,13 @@ export type ParticipantErrors = Partial<Record<ParticipantField, string>>
 
 ```ts
 export interface RegistrationSummary {
-  items: { id: string; nombreCompleto: string; edad: number; tarifa: number }[]
-  total: number // entero CLP, suma de las tarifas
+  items: { id: string; fullName: string; age: number; fare: number }[]
+  total: number // integer CLP, sum of fares
 }
 ```
 
-* Se llama solo con participantes ya validados (`edad` no nula).
-* `nombreCompleto` = `` `${nombre.trim()} ${apellido.trim()}` ``.
+* Se llama solo con participantes ya validados (`age` no nula).
+* `fullName` = `getFullName(p)` = `` `${firstName.trim()} ${lastName.trim()}` ``.
 
 ---
 
@@ -72,6 +76,7 @@ export interface RegistrationSummary {
 
 * **Firmas:**
   * `normalizeRut(rut: string): string`: quita puntos, guiones y espacios, pasa la `k` a mayúscula y devuelve `"12345678-5"`.
+  * `formatRut(rut: string): string`: formato de visualización **`26905429-8`** (sin puntos, con guion antes del dígito verificador). Si el usuario no escribió el guion, lo agrega (`"269054298"` → `"26905429-8"`). Formatea aunque el dígito verificador sea incorrecto, para que el error se entienda. Si la entrada no tiene forma de RUT (1 a 8 dígitos + dígito verificador), la devuelve sin cambios.
   * `validateRut(rut: string): boolean`
 * **Reglas:**
   * Normaliza antes de validar.
@@ -120,8 +125,8 @@ export interface RegistrationSummary {
 * **Firma:** `validateParticipant(p: Participant, otherRuts: string[]): ParticipantErrors`
 * Devuelve un objeto con un mensaje en español por cada campo inválido. Un objeto vacío (`{}`) significa que el participante es válido.
 * `otherRuts` son los RUT de los **demás** participantes del registro. Si `normalizeRut(p.rut)` coincide con alguno de ellos normalizado, el error de `rut` es `"Este RUT ya fue ingresado en este registro"`.
-* El correo y el teléfono son obligatorios u opcionales según `p.esPrincipal`.
-* `requiereTransporte === null` produce un error.
+* El correo y el teléfono son obligatorios u opcionales según `p.isPrincipal`.
+* `needsTransport === null` produce un error.
 
 ### 3.8. Voucher
 
@@ -147,23 +152,23 @@ export interface RegistrationSummary {
 
 ## 5. Construcción del Payload para Make
 
-* **Firma:** `buildMakePayload(participants: Participant[], payment: { personaDepositante: string }, voucherDataUrl: string): MakePayload`
+* **Firma:** `buildMakePayload(participants: Participant[], payment: Pick<PaymentData, 'depositMadeBy'>, voucherDataUrl: string): MakePayload`
 * Es una función pura. La conversión del `File` a data URL ocurre en la capa de infraestructura (SPEC-002 §4).
 
 ```ts
 export interface MakePayload {
-  amount: number          // entero CLP = calculateRegistrationSummary(...).total
-  depositMadeBy: string   // personaDepositante.trim()
-  voucher: string         // data URL: "data:image/png;base64,..." o "data:image/jpeg;base64,..."
+  amount: number          // integer CLP = calculateRegistrationSummary(...).total
+  depositMadeBy: string   // payment.depositMadeBy.trim()
+  voucher: string         // data URL: "data:image/png;base64,..." or "data:image/jpeg;base64,..."
   participants: {
-    nameAndLastName: string       // `${nombre.trim()} ${apellido.trim()}`
+    nameAndLastName: string       // getFullName(p)
     rut: string                   // normalizeRut → "12345678-5"
     age: number
-    sex: Sexo                     // 'femenino' | 'masculino'
-    phone: string                 // normalizePhone → "+56912345678", o '' si está vacío
-    email: string                 // trim, o '' si está vacío
+    sex: Sex                      // 'femenino' | 'masculino'
+    phone: string                 // normalizePhone → "+56912345678", or '' when empty
+    email: string                 // trimmed, or '' when empty
     needsTransport: boolean
-    is_contact_principal: boolean // = esPrincipal
+    is_contact_principal: boolean // = isPrincipal
   }[]
 }
 ```
@@ -186,6 +191,8 @@ export interface MakePayload {
 | `V-02` | RUT | Válido sin puntos ni guion y con `k` | `"10000013k"` | `true` |
 | `V-03` | RUT | Dígito verificador incorrecto | `"12.345.678-9"` | `false` |
 | `V-04` | RUT | Normalización | `"10.000.013-k"` | `"10000013-K"` |
+| `V-23` | RUT | Formato sin guion | `"269054298"` / `"10000013k"` | `formatRut` → `"26905429-8"` / `"10000013-K"` |
+| `V-24` | RUT | Formato con puntos o ya formateado | `"26.905.429-8"` / `"26905429-8"` | `"26905429-8"` |
 | `V-05` | Email | Correo válido | `"usuario@gmail.com"` | `true` |
 | `V-06` | Email | Correo mal formado | `"usuario@gmail"` / `"usuario@.com"` | `false` |
 | `V-07` | Email | Adicional vacío vs. inválido | `""` / `"mal-correo"` | `""` es válido; `"mal-correo"` da error |
@@ -199,7 +206,7 @@ export interface MakePayload {
 | `V-15` | Edad | Decimal / negativo / nulo | `2.5` / `-1` / `null` | error |
 | `V-16` | Sexo | Sin seleccionar | `''` | error |
 | `V-17` | Participante | RUT duplicado en el registro | `rut "12.345.678-5"`, `otherRuts ["123456785"]` | error de `rut` |
-| `V-18` | Participante | Transporte sin responder | `requiereTransporte: null` | error de `requiereTransporte` |
+| `V-18` | Participante | Transporte sin responder | `needsTransport: null` | error de `needsTransport` |
 | `V-19` | Participante | Participante válido completo | todos los campos OK | `{}` |
 | `V-20` | Voucher | Tipo permitido | `image/jpeg` | `null` |
 | `V-21` | Voucher | Tipo no permitido / ausente | `application/pdf` / `null` | mensaje de error |

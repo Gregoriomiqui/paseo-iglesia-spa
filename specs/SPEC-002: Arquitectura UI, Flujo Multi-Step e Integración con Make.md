@@ -28,9 +28,9 @@ Se ubica en la parte superior del formulario o en una sección dedicada. Debe mo
 
 Estado:
 
-* `participants: Participant[]`: se inicializa con 1 elemento con `esPrincipal: true`.
+* `participants: Participant[]`: se inicializa con 1 elemento con `isPrincipal: true`.
 * `currentStepIndex: number`: `0..participants.length - 1` son los steps de participantes y `participants.length` es el step de pago.
-* `paymentData: PaymentData`: contiene `personaDepositante` y `voucher`.
+* `paymentData: PaymentData`: contiene `depositMadeBy` y `voucher`.
 * `submissionStatus: 'idle' | 'submitting' | 'success' | 'error'`.
 
 ### 2.3. Step de participante (`ParticipantStep`)
@@ -41,7 +41,7 @@ Formulario reutilizable para el participante principal y hasta 4 adicionales (m�
 | --- | --- | --- |
 | Nombre | `input text` | `maxLength={250}`; recibe el auto-focus |
 | Apellido | `input text` | `maxLength={250}` |
-| RUT | `input text` | valida dígito verificador y duplicados (SPEC-001 §3.1, §3.7) |
+| RUT | `input text` | placeholder `12345678-5`; se formatea al salir del campo (§3.6); valida dígito verificador y duplicados (SPEC-001 §3.1, §3.7). El wizard pasa como `otherRuts` solo los RUT de los participantes **anteriores**, así que el error aparece en quien repitió el RUT y no en el original |
 | Sexo | `select` o radio | opciones: Femenino / Masculino |
 | Edad | `input number` | `min=0`, `step=1`; ayuda visible: "Si es menor de 1 año, ingresa 0" |
 | Correo electrónico | `EmailAutocompleteInput` | obligatorio en el principal, opcional en los adicionales |
@@ -50,9 +50,10 @@ Formulario reutilizable para el participante principal y hasta 4 adicionales (m�
 
 * **Indicadores visuales:** en el step del principal, el correo y el teléfono se marcan como **obligatorios**. En los adicionales se marcan como **opcionales**.
 * **Acciones del step:**
-  * `Agregar otro participante`: solo está disponible si `validateParticipant` devuelve `{}` y `participants.length < 5`.
-  * `Continuar al pago`: valida el step actual y navega al step de pago.
-  * `Anterior`: vuelve al step anterior sin perder los datos.
+  * `Agregar otro participante` (solo en el último participante): se muestra mientras `participants.length < 5` y está habilitado solo si `validateParticipant` devuelve `{}`.
+  * `Continuar al pago` (solo en el último participante): valida a todos los participantes. Si alguno es inválido, navega a él y muestra sus errores; si no, navega al step de pago.
+  * `Siguiente participante` (en los participantes intermedios, después de haber vuelto atrás): valida el step actual y avanza al siguiente.
+  * `Anterior`: vuelve al step anterior sin validar y sin perder los datos.
   * `Eliminar participante`: solo existe para participantes adicionales. Ver la regla de navegación en §3.4.
 
 ### 2.4. Componente `EmailAutocompleteInput`
@@ -65,7 +66,7 @@ Formulario reutilizable para el participante principal y hasta 4 adicionales (m�
 
 * **Resumen:** muestra el desglose por participante y el **monto total** calculado por `calculateRegistrationSummary`.
 * **Campos obligatorios:**
-  * `Persona depositante` (`input text`).
+  * `Nombre de quien hizo el depósito` (`input text`, campo `depositMadeBy`).
   * `Voucher / comprobante de pago` (`input file` con `accept=".png,.jpg,.jpeg,image/png,image/jpeg"`), validado con `validateVoucher`.
 * **Acción final:** botón `Finalizar inscripción`, deshabilitado mientras `submissionStatus === 'submitting'`.
 
@@ -78,6 +79,7 @@ Formulario reutilizable para el participante principal y hasta 4 adicionales (m�
 3. **Feedback de validación:** los mensajes de `validateParticipant` / `validateVoucher` se muestran debajo de cada campo antes de permitir avanzar.
 4. **Eliminar un participante:** se quita del arreglo y el wizard navega al **participante anterior** (`currentStepIndex = índiceEliminado - 1`). Los participantes posteriores conservan sus datos y su orden.
 5. **Autocompletado del teléfono:** al salir del campo (`blur`), si el valor es un teléfono válido después de `normalizePhone`, el input se reescribe con `formatPhone`. Por ejemplo, `"912345678"` → `"+56 9 1234 5678"`.
+6. **Formato del RUT:** al salir del campo (`blur`), el input se reescribe con `formatRut` en el formato `26905429-8`. Si el usuario no escribió el guion, se agrega antes del dígito verificador (`"269054298"` → `"26905429-8"`), y los puntos se quitan.
 
 ---
 
@@ -150,11 +152,12 @@ Toda variable `VITE_*` se incluye en el bundle público, así que cualquier pers
 | `U-11` | `ParticipantStep` | RUT repetido en el participante 2 | Se muestra "Este RUT ya fue ingresado en este registro" y no se puede avanzar |
 | `U-12` | `PaymentStep` | Adjuntar un archivo `.pdf` | Se muestra un error de tipo y no se puede finalizar |
 | `U-13` | `PaymentStep` | Adjuntar una imagen de más de 5 MB | Se muestra un error de tamaño y no se puede finalizar |
+| `U-14` | `ParticipantStep` | RUT `"269054298"` y luego `blur` | El input muestra `"26905429-8"` |
 
 ---
 
 ## 6. Criterios de Aceptación (Definition of Done)
 
-1. Todos los tests de SPEC-001 y SPEC-002 (`U-01` a `U-13`) pasan en verde.
+1. Todos los tests de SPEC-001 y SPEC-002 (`U-01` a `U-14`) pasan en verde.
 2. Los estilos se implementan **solo con Tailwind CSS** (sin CSS-in-JS ni Styled Components), con diseño responsivo *mobile-first*.
 3. No hay valores hardcodeados: la URL del webhook se inyecta con `import.meta.env.VITE_MAKE_WEBHOOK_URL`.
